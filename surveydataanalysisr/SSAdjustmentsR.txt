@@ -1,0 +1,671 @@
+#R version of SSAdjustments
+#M Fowler
+#July 2014
+#Removed restratification and length fan options for desktop version.
+#Pathing yet to be addressed
+SSAdjustments = 
+function(gdotemp,LTT,UTT,gEstVar,gAdjOpt,gDepthFitOpt,gTimeFitOpt)
+{
+	#Obtain stratified survey estimates of weights/biomass and numbers/abundance.
+	#Estimates can be adjusted for depth or local time biases.
+	#Temperature can be analyzed as a covariate. But estimates not adjusted for temperature.
+	#Bootstrapped confidence intervals could be determined if dostrap=T. Currently disabled (long job). 
+	dotemp=FALSE
+	if(length(gdotemp)>0)dotemp = TRUE
+	if(gAdjOpt=="Depth & Time")gAdjOpt = "DepthAndTime"
+	#leaving the code but turning this off (the user dialog does not include the bootstrapping option)
+	dostrap = F
+	#old code for capturing user-edited depth or time proportions
+	#vinc = match("Data20",parfil$varname)
+	#dlen = as.numeric(parfil$varvalue[parfil$varname == "Data11"])
+	#tlen = as.numeric(parfil$varvalue[parfil$varname == "Data12"])
+	#DTvec = as.numeric(parfil$varvalue[vinc:dim(parfil)[1]])
+	EstVar = switch(gEstVar,
+		Weights = 1,
+		Numbers = 2,
+		Group.1 = 3,
+		Group.2 = 4)
+	AdjOpt = switch(gAdjOpt,
+		Nothing = 0,
+		Depth = 1,
+		Time = 2,
+		DepthAndTime = 3)
+	DepthFitOpt = switch(gDepthFitOpt,
+		Raw = 1,
+		'2df' = 4,
+		'3df' = 5,
+		'4df' = 6,
+		'5df' = 7)
+	TimeFitOpt = switch(gTimeFitOpt,
+		Raw = 1,
+		'2df' = 4,
+		'3df' = 5,
+		'4df' = 6,
+		'5df' = 7)
+	LowerTemp=as.numeric(LTT)
+	UpperTemp=as.numeric(UTT)
+	cat("\nEstimates of ", gEstVar," with adjustments for ", gAdjOpt, "\n")
+	if(AdjOpt == 1 | AdjOpt == 3) {
+		degf = DepthFitOpt - 2
+		if(degf < 0)cat("\nUsing the observed depth distribution to adjust estimates.\n")
+		if(degf > 0)cat("\nUsing a fitted depth distribution based on ",degf," degrees of freedom to adjust estimates.\n")
+	}
+	if(AdjOpt == 2 | AdjOpt == 3) {
+		degf = TimeFitOpt - 2
+		if(degf < 0)cat("\nUsing the observed local time distribution to adjust estimates.\n")
+		if(degf > 0)cat("\nUsing a fitted local time distribution based on ",degf," degrees of freedom to adjust estimates.\n")
+	}
+	if(dotemp == T)
+		cat("\nA temperature index will be produced as the annual percentage of sets within ", LowerTemp, " and ", UpperTemp," degrees centigrade.\n")
+	if(dostrap == T)cat("<BR>Confidence intervals of estimates will be determined by bootstrapping with replacement for 1000 iterations.<BR>")
+	stock = get("outdf")
+	strata.stock = get("strata.stock")
+	strata.stock$strata = as.numeric(strata.stock$strata)
+	#		Compare traditional with depth- and/or time-standardized estimates.
+	#		Show temperature trend relative to estimates.
+	#		Provide the various estimates as a table.
+	if(EstVar == 1) {
+		#truthing estimate for comparison to VDC 'Numbers & Weights' app. Have to explicitly round to to 2 significant digits to get a match
+		#stock$est = round(stock$total.wgt,2)
+		stock$est = stock$total.wgt
+		standepth = get("standepth1")
+		stantime = get("stantime1")
+		stantemp = get("stantemp1")
+	}
+	if(EstVar == 2) {
+		#truthing estimate for comparison to VDC 'Numbers & Weights' app. Have to explicitly round to to 2 significant digits to get a match
+		#stock$est = round(stock$total.no,2)
+		stock$est = stock$total.no
+		standepth = get("standepth2")
+		stantime = get("stantime2")
+		stantemp = get("stantemp2")
+	}
+	if(EstVar == 3) {
+		stock$est = stock$rawsmall
+		standepth = get("standepth3")
+		stantime = get("stantime3")
+		stantemp = get("stantemp3")
+	}
+	if(EstVar == 4) {
+		stock$est = stock$rawbig
+		standepth = get("standepth4")
+		stantime = get("stantime4")
+		stantemp = get("stantemp4")
+	}
+	#next two lines would replace raw or fitted with customized values if enabled
+	#standepth[, DepthFitOpt] = DTvec[1:length(unique(as.character(stock$dep10m)))]
+	#stantime[, TimeFitOpt] = DTvec[(1 + length(unique(as.character(stock$dep10m)))):length(DTvec)]
+	if(AdjOpt == 1 | AdjOpt == 3)depthfit = standepth[, DepthFitOpt]
+	if(AdjOpt == 2 | AdjOpt == 3)timefit = stantime[, TimeFitOpt]
+	#Produce temperature trend table
+	stock$inout = rep(NA, dim(stock)[1])
+	if(dotemp == T) {
+		stock$inout[(stock$temp1d >= (LowerTemp) & stock$temp1d <= (UpperTemp))] = 1
+		stock$inout[(stock$temp1d < (LowerTemp) | stock$temp1d > (UpperTemp))] = 0
+		sss = stock[(is.na(stock$inout) == F),  ]
+		YearSets = tapply((sss$year/sss$year), c(sss$year), sum)
+		YearGood = tapply(sss$inout, c(sss$year), sum)
+		TemperatureTrend = data.frame(Year = sort(as.numeric(names(YearSets))), Sets = YearSets, Inside = YearGood, ProportionInside = (YearGood/YearSets))
+	}
+	pdf(file=paste(getwd(),"/ssadjgraphs.pdf",sep=""),width=6.5,height=8)
+	#Determinations of adjustment factors were made using tow-standardized values. The following applications
+	# of these adjustments are made to raw values. Potentially confusing, but the 'stratify' function assumes
+	# that values have yet to be standardized for tow duration.
+	#Adjust for depth
+	if(AdjOpt == 1 | AdjOpt == 3) {
+		depthfit = standepth[, DepthFitOpt]
+		depthrange = standepth[, 2]
+		#If necessary,shift fitted values of proportions at depth to bottom out at 0
+		zscale = abs(min(depthfit))
+		if(min(depthfit) < 0)depthfit = depthfit + zscale
+		#Scale the fitted values to 100% (required if the scale has to be shifted up for negative values)
+		pscale = sum(depthfit)
+		depthfit = (1/pscale) * depthfit
+		###Bring in the data file holding bottom and sampling depth data for 1970-1999
+		###PATHING CONCERN
+		if(stock$series[1]=='SUMMER ')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DepthProfile.dat",header = T)
+		if(stock$series[1]=='SPRING ')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DPSpring.dat",header = T)
+		if(stock$series[1]=='FALL   ')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DPFall.dat",header = T)
+		if(stock$series[1]=='4VWCOD ')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DP4VW.dat",header = T)
+		if(stock$series[1]=='GEORGES')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DPGB.dat",header = T)
+		if(stock$series[1]=='GULF   ')profdep = read.table("D:\\assess\\SurveyDataAnalysisR\\DP4T.dat",header = T)
+		#Plot the proportionate survey sampling depth distribution (points) and bottom depth distribution (thin line)
+		#for each stratum. Also plot the overall species depth.
+		#distribution on each figure.
+		svec = sort(as.numeric(unique(strata.stock$strata)))
+		AdjStrataDepth = profdep[(profdep$SOURCE == 2 & profdep$STRATA >= min(svec) & profdep$STRATA <= max(svec)),]
+		AdjStrataDepth$AdjFactor = rep(NA, dim(AdjStrataDepth)[1])
+		AdjStrataDepth$TrawlUnits = rep(NA, dim(AdjStrataDepth)[1])
+		par(mfrow = c(3, 4))
+		k = 0
+		for(i in 1:length(svec)) {
+			k = k + 1
+			ss = profdep[profdep$STRATA == svec[i],  ]
+			plot(ss$DEP10[ss$SOURCE == 1], ss$DISTFRAC[ss$SOURCE ==	1], type = "p", xlim = c(0, 600), ylim = c(0, 0.69999999999999996), xlab = "Depth", ylab = "Proportion of Area")
+			points(ss$DEP10[ss$SOURCE == 2], ss$DISTFRAC[ss$SOURCE ==2], type = "l")
+			points(depthrange, (depthfit), type = "l", lwd = 3)
+			text(500, 0.59999999999999998, svec[i])
+			ss = ss[ss$SOURCE == 2,  ]
+			###Derive strata/depth-specific adjustment factors to reconcile fish depth distribution with strata estimates
+			dbias = rep(NA, dim(ss)[1])
+			for(j in 1:dim(ss)[1]) {
+				if(is.na(match(ss$DEP10[j], depthrange))) {
+					dbias[j] = NA
+					next }
+				dbias[j] = depthfit[depthrange == ss$DEP10[j]]
+			}
+			###If the bottom depth distribution includes depths that have never been 
+			###sampled (hence no fitted values), provide surrogate values - mean of adjacent
+			###values or closest value if 1 or 0 adjacent values
+			while(any(is.na(dbias))) {
+				for(j in 1:length(dbias)) {
+					if(is.na(dbias[j]))dbias[j] = mean(c(dbias[(j - 1)], dbias[(j)], dbias[(j + 1)]),na.rm = T)
+				}
+			}
+			#Scale to proportions of 1 to give AdjFactor (Bp)
+			scalebias = sum(dbias)
+			depthbias = (dbias/scalebias)
+			if(scalebias == 0)depthbias = rep((1/length(dbias)), length(dbias))
+			kk = k + length(depthbias) - 1
+			AdjStrataDepth$AdjFactor[k:kk] = depthbias
+			AdjStrataDepth$TrawlUnits[k:kk] = rep(strata.stock$NH[strata.stock$strata == svec[i]], length(depthbias))
+			k = kk
+		}
+		#Produce depth-standardized estimates
+		#Dp = the proportion of the stratum area contained within the 10m depth zone of the estimate
+		#Bp = the relative proportion of species biomass or abundance within the 10m depth zone of the estimate
+		#Example for Bp: a given stratum covers a depth range of 70 to 90 meters
+		#		 the proportions of stratum area by depth zones (Dp) are .25 at 70, .5 at 80, .25 at 90
+		#		 a given species covers a depth range of 60 to 120 meters
+		#		 the all-strata-years proportions of a species for the depth range (given equal sampling per depth) 
+		#			 would be .05 .1 .2 .3 .2 .1 .05; this should be rationalized by stock
+		#		 the proportions of the species at depths covered by the given stratum (Bp) are .1 .2 .3
+		#		 a sample of 5 kg (W) was collected from 70m
+		#		 the adjusted estimates (Wadj) of species at each depth is:
+		#		 	W*(Bp of depth/Bp of sample depth) : 5*.1/.1 = 5, 5*.2/.1 = 10, 5*.3/.1 = 15
+		#		 the depth-standardized estimate of species in the stratum is the weighted mean of the Wadj values, 
+		#			using Dp to weight: mean of 5(w of .25), 10(w of .5), 15(w of .25) = 10
+		stock$AdjEst = rep(NA, dim(stock)[1])
+		for(i in 1:dim(stock)[1]) {
+		bpa=AdjStrataDepth$AdjFactor[(AdjStrataDepth$STRATA == as.numeric(stock$strata[i]))]
+		bpd=AdjStrataDepth$AdjFactor[((AdjStrataDepth$STRATA == as.numeric(stock$strata[i])) & (AdjStrataDepth$DEP10 == as.numeric(stock$dep10m[i])))]
+		if(length(bpd)<1) {
+		depr=AdjStrataDepth$DEP10[AdjStrataDepth$STRATA == as.numeric(stock$strata[i])]
+		realdep=as.numeric(stock$dep10m[i])
+		depr1=min(depr)
+		depr2=max(depr)
+		dif1=abs(realdep-depr1)
+		dif2=abs(realdep-depr2)
+		if(dif1<dif2)bpd=AdjStrataDepth$AdjFactor[((AdjStrataDepth$STRATA == as.numeric(stock$strata[i])) & (AdjStrataDepth$DEP10 == depr1))]
+		if(dif2<dif1)bpd=AdjStrataDepth$AdjFactor[((AdjStrataDepth$STRATA == as.numeric(stock$strata[i])) & (AdjStrataDepth$DEP10 == depr2))]
+		}
+		Wadj = stock$est[i] * bpa/bpd
+		if(is.na(Wadj)) Wadj=rep(0,length(bpa))
+			stock$AdjEst[i] = weighted.mean(Wadj, AdjStrataDepth$DISTFRAC[(AdjStrataDepth$STRATA == as.numeric(stock$strata[i]))])
+		}
+	}
+	###Derive time-specific adjustment factors to reconcile daily catchability distribution with strata estimates
+	if(AdjOpt == 2 | AdjOpt == 3) {
+		timefit = stantime[, TimeFitOpt]
+		timerange = stantime[, 2]
+		#If necessary,shift fitted values of proportions at time to bottom out at 0
+		zscale = abs(min(timefit))
+		if(min(timefit) < 0)timefit = timefit + zscale
+		#Scale the fitted values to 100% (only required if the scale had to be shifted up for negative values)
+		pscale = sum(timefit)
+		timefit = (1/pscale) * timefit
+		#Produce time-standardized estimates
+		# Bp = the proportion of species biomass or abundance within each 1 hr time zone; this should be rationalized by stock
+		# Unbiased Bp = 1/24 = 0.041667 the all-strata-years proportions of a species by hour (assuming equal sampling per hour) 
+		# the all-strata-years proportions of a species by hour (assuming equal sampling per hour) 
+		#	would be 0.122311 0.072045 0.111432 ... 0.058644 0.085086 0.067781 for hours 0 1 2 ... 21 22 23
+		#		 a sample of 5 kg (W) was collected at 0200 hrs
+		#		 the adjusted estimate (Wadj) of species at a standard hour:
+		#		 	W*(0.041667/Bp of sample depth) : 5*0.041667/0.111432 = 1.8696
+		stock$TAdjEst = rep(NA, dim(stock)[1])
+		for(i in 1:dim(stock)[1]) {
+			stock$TAdjEst[i] = stock$est[i] * (timefit[(timerange ==as.numeric(stock$timehr[i]))]/0.041667000000000003)
+		}
+	}
+	###Adjust estimates for both time and depth biases
+	if(AdjOpt == 3) {
+		timefit = stantime[, TimeFitOpt]
+		timerange = stantime[, 2]
+		#If necessary,shift fitted values of proportions at time to bottom out at 0
+		zscale = abs(min(timefit))
+		if(min(timefit) < 0)timefit = timefit + zscale
+		#Scale the fitted values to 100% (only required if the scale had to be shifted up for negative values)
+		pscale = sum(timefit)
+		timefit = (1/pscale) * timefit
+		#Produce time/depth-standardized estimates (just apply time adjustments to depth-adjusted estimates)
+		stock$TDAdjEst = rep(NA, dim(stock)[1])
+		for(i in 1:dim(stock)[1]) {
+			stock$TDAdjEst[i] = stock$AdjEst[i] * (timefit[(timerange == as.numeric(stock$timehr[i]))]/0.041667000000000003)
+		}
+	}
+	###Run STRAP (stratify6)
+	###library(nafolib, first = T)
+	for(i in min(stock$year):max(stock$year)) {
+	if(dim(stock[stock$year == i,])[1]==0) next
+		assign(paste("stock.", i, sep = ""), stock[stock$year == i,], pos = 1, immediate = TRUE)
+	}
+	for(i in min(stock$year):max(stock$year)) {
+	if(dim(stock[stock$year == i,])[1]==0) next
+		sobj = get(paste("stock.", i, sep = ""), pos = 1)
+		row.names(sobj) = 1:dim(sobj)[1]
+		class(sobj) = c("strata.data", "data.frame")
+		assign(paste("stock.", i, sep = ""), sobj, pos = 1, immediate = TRUE)
+	}
+	#Create data.frame to hold summary of strata for which one or no sets were taken.
+	y = sort(unique(stock$year))
+	bogus = rep(NA, (dim(strata.stock)[1] * length(y)))
+	snsets = data.frame(Year = bogus, Strata = bogus, Sets = bogus)
+	###Produce stratified estimates of requested weights or numbers
+	###If weights, weight per tow in kgs and biomass in metric tons
+	nnn = rep(NA, length(y))
+	dfy = data.frame(year = y, mean = nnn, se.mean = nnn, lower = nnn,
+		upper = nnn, total = nnn, se.tot = nnn, lower.tot = nnn, 
+		upper.tot = nnn, eff.alloc = nnn, eff.strata = nnn)
+	dfyest = dfy
+	dfyadjest = dfy
+	dfytadjest = dfy
+	dfytdadjest = dfy
+	dfyrestrat = dfy
+	slist = sort(unique(strata.stock$strata))
+	k = 0
+	j = 0
+	jj = 0
+	for(i in min(stock$year):max(stock$year)) {
+if(dim(stock[stock$year == i,])[1]==0) next
+		k = j + dim(strata.stock)[1]
+		j = j + 1
+		jj = jj + 1
+		yyy = stratify6(get(paste("stock.", i, sep = "")), strata.stock, species = 'est')
+#in R the yhi vectors get converted to character when passed from stratify6
+#do not know why, nor can I replicate the behaviour outside the function wrappers (same syntax leaves the vectors numeric)
+		yyy$yhi=sapply(yyy$yhi,as.numeric)
+		yy = summary(yyy, effic = T)
+		mean.tow = yy$yst
+		se.tow = yy$se.yst
+		lowCI.tow = yy$ci.yst[1]
+		upCI.tow = yy$ci.yst[2]
+		mean.sur = yy$Yst/1000
+		se.sur = ((yy$Yst/yy$yst) * yy$se.yst)/1000
+		lowCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[1])/1000)
+		upCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[2])/1000)
+		dfyest[jj, 2:11] = c(mean.tow, se.tow,
+			lowCI.tow, upCI.tow, mean.sur, se.sur, lowCI.sur,
+			upCI.sur, yy$effic.alloc, yy$effic.str)
+		if(dostrap == T) {
+			bsy = BSTRAP(yyy)
+			lowCI.tow = bsy[3]
+			upCI.tow = bsy[4]
+			lowCI.sur = (((yy$Yst/yy$yst) * bsy[3])/1000)
+			upCI.sur = (((yy$Yst/yy$yst) * bsy[4])/1000)
+			dfyest[jj, c(3, 4, 7, 8)] =c(lowCI.tow, upCI.tow, lowCI.sur, upCI.sur)
+		}
+		if(AdjOpt == 1 | AdjOpt == 3) {
+			yyy = stratify6(get(paste("stock.", i, sep = "")),strata.stock, species = 'AdjEst')
+			yyy$yhi=sapply(yyy$yhi,as.numeric)
+			yy = summary(yyy, effic = T)
+			mean.tow = yy$yst
+			se.tow = yy$se.yst
+			lowCI.tow = yy$ci.yst[1]
+			upCI.tow = yy$ci.yst[2]
+			mean.sur = yy$Yst/1000
+			se.sur = ((yy$Yst/yy$yst) * yy$se.yst)/1000
+			lowCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[1])/1000)
+			upCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[2])/1000)
+			dfyadjest[jj, 2:11] = c(mean.tow, se.tow, lowCI.tow, upCI.tow, 
+				mean.sur, se.sur, lowCI.sur, upCI.sur, yy$effic.alloc, yy$effic.str)
+			if(dostrap == T) {
+				bsy = BSTRAP(yyy)
+				lowCI.tow = bsy[3]
+				upCI.tow = bsy[4]
+				lowCI.sur = (((yy$Yst/yy$yst) * bsy[3])/1000)
+				upCI.sur = (((yy$Yst/yy$yst) * bsy[4])/1000)
+				dfyadjest[jj, c(3,4, 7, 8)] = c(lowCI.tow, upCI.tow,lowCI.sur, upCI.sur)
+			}
+		}
+		if(AdjOpt == 2 | AdjOpt == 3) {
+			yyy = stratify6(get(paste("stock.", i, sep = "")),strata.stock, species = 'TAdjEst')
+			yyy$yhi=sapply(yyy$yhi,as.numeric)
+			yy = summary(yyy, effic = T)
+			mean.tow = yy$yst
+			se.tow = yy$se.yst
+			lowCI.tow = yy$ci.yst[1]
+			upCI.tow = yy$ci.yst[2]
+			mean.sur = yy$Yst/1000
+			se.sur = ((yy$Yst/yy$yst) * yy$se.yst)/1000
+			lowCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[1])/1000)
+			upCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[2])/1000)
+			dfytadjest[jj, 2:11] = c(mean.tow, se.tow, lowCI.tow, upCI.tow, 
+				mean.sur, se.sur, lowCI.sur, upCI.sur, yy$effic.alloc, yy$effic.str)
+			if(dostrap == T) {
+				bsy = BSTRAP(yyy)
+				lowCI.tow = bsy[3]
+				upCI.tow = bsy[4]
+				lowCI.sur = (((yy$Yst/yy$yst) * bsy[3])/1000)
+				upCI.sur = (((yy$Yst/yy$yst) * bsy[4])/1000)
+				dfytadjest[jj, c(3,4, 7, 8)] = c(lowCI.tow, upCI.tow,lowCI.sur, upCI.sur)
+			}
+		}
+		if(AdjOpt == 3) {
+			yyy = stratify6(get(paste("stock.", i, sep = "")),strata.stock, species = 'TDAdjEst')
+			yyy$yhi=sapply(yyy$yhi,as.numeric)
+			yy = summary(yyy, effic = T)
+			mean.tow = yy$yst
+			se.tow = yy$se.yst
+			lowCI.tow = yy$ci.yst[1]
+			upCI.tow = yy$ci.yst[2]
+			mean.sur = yy$Yst/1000
+			se.sur = ((yy$Yst/yy$yst) * yy$se.yst)/1000
+			lowCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[1])/1000)
+			upCI.sur = (((yy$Yst/yy$yst) * yy$ci.yst[2])/1000)
+			dfytdadjest[jj, 2:11] = c(mean.tow, se.tow, lowCI.tow, upCI.tow, 
+				mean.sur, se.sur, lowCI.sur, upCI.sur, yy$effic.alloc, yy$effic.str)
+			if(dostrap == T) {
+				bsy = BSTRAP(yyy)
+				lowCI.tow = bsy[3]
+				upCI.tow = bsy[4]
+				lowCI.sur = (((yy$Yst/yy$yst) * bsy[3])/1000)
+				upCI.sur = (((yy$Yst/yy$yst) * bsy[4])/1000)
+				dfytdadjest[jj, c(3, 4, 7, 8)] = c(lowCI.tow, upCI.tow, lowCI.sur, upCI.sur)
+			}
+		}
+		###Note any missed or single-set-sampled strata
+		setmatch = match(slist, as.numeric(sort(unique(yyy$Strata))), nomatch = NA, incomparables = F)
+		nullsets = slist[is.na(setmatch)]
+		k = k - length(nullsets)
+		snsets$Year[j:k] = i
+		snsets$Strata[j:k] = sort(unique(yyy$Strata))
+		snsets$Sets[j:k] = yyy$nh
+		if(length(nullsets) >= 1) {
+			for(iii in 1:length(nullsets)) {
+				snsets$Year[(k + iii)] = i
+				snsets$Strata[(k + iii)] = as.character(nullsets[iii])
+				snsets$Sets[(k + iii)] = 0
+			}
+		}
+		k = k + length(nullsets)
+		j = k
+	}
+	#Display the mean percent contribution of each stratum to estimates
+	StratMean = tapply(stock$est, list(stock$strata), mean)
+	StratPercent = StratMean/sum(StratMean) * 100
+	StrataCont = data.frame(Strata = sort(unique(stock$strata)), Contribution = StratPercent)
+	cat("\nMean Percent Contribution of Strata to Estimates:\n")
+	print(StrataCont)
+	cat("\nMissed and One-Sample Strata:\n")
+	#cat(html.table(snsets[snsets$Sets <= 1,  ]))
+	print(snsets[snsets$Sets <= 1,  ])
+	par(mfrow = c(1, 1))
+	if(dotemp == T) {
+		#Plot annual temperature trend
+		plot(TemperatureTrend$Year, TemperatureTrend$ProportionInside,type = "l", xlab = "Year", ylab = "Proportion of Sets Within Temperature Regime")
+		cat("\nProportion of Sets Within Favourable Temperature Regime\n")
+		print(TemperatureTrend)
+		cat("\nThe above table is a printout of dataframe TemperatureTrend.\n")
+	}
+	#Plot of traditional estimates
+	ylim1 = max(dfyest$mean)
+	plot(dfyest$year, dfyest$mean, type = "p", ylim = c(0, ylim1), xlab = "Year", ylab = "Traditional Stratified Estimates")
+	cat("\nTraditional Stratified Estimates\n")
+	print(dfyest)
+	assign("dfyest", dfyest, envir=.GlobalEnv)
+	#Comparison plot of traditional and depth-standardized estimates (remember both are stratified)
+	if(AdjOpt == 1 | AdjOpt == 3) {
+		ylim1 = max(dfyest$mean)
+		ylim2 = max(dfyadjest$mean)
+		if(ylim2 > ylim1)ylim1 = ylim2
+		par(mfrow = c(2, 1))
+		plot(dfyest$year, dfyest$eff.alloc, type = "l", xlab = "Year",ylab = "Set Allocation Efficiency")
+		lines(dfyadjest$year, dfyadjest$eff.alloc, type = "l", lwd = 3)
+		legend("bottomleft",legend = c("Traditional", "Depth-Standardized"), lwd = c(1, 3))
+		plot(dfyest$year, dfyest$eff.strata, type = "l", xlab = "Year",ylab = "Stratification Efficiency")
+		lines(dfyadjest$year, dfyadjest$eff.strata, type = "l", lwd = 3)
+		par(mfrow = c(1, 1))
+		propse=dfyest$se.mean/dfyest$mean
+		propse[is.na(propse)]=0
+		propse2=dfyadjest$se.mean/dfyadjest$mean
+		propse2[is.na(propse2)]=0
+		plot(dfyest$year, propse, type = "l",xlab = "Year", ylab = "Standard Error/Mean", ylim = c(min(c((propse), (propse2))),max(c((propse), (propse2)))))
+		lines(dfyadjest$year, propse2, type = "l", lwd = 3)
+		plot(dfyest$year, dfyest$mean, type = "p", ylim = c(0, ylim1),xlab = "Year", ylab = "Traditional and Depth-Standardized Estimates")
+		points(dfyadjest$year, dfyadjest$mean, type = "l")
+		cat("\nDepth-Standardized Estimates\n")
+		print(dfyadjest)
+		assign("dfyadjest", dfyadjest, envir=.GlobalEnv)
+	}
+	#Comparison plot of traditional and time-standardized estimates (remember both are stratified)
+	if(AdjOpt == 2 | AdjOpt == 3) {
+		ylim1 = max(dfyest$mean)
+		ylim2 = max(dfytadjest$mean)
+		if(ylim2 > ylim1)ylim1 = ylim2
+		par(mfrow = c(2, 1))
+		plot(dfyest$year, dfyest$eff.alloc, type = "l", xlab = "Year",ylab = "Set Allocation Efficiency")
+		lines(dfytadjest$year, dfytadjest$eff.alloc, type = "l", lwd = 3)
+		legend("bottomleft",legend = c("Traditional", "Time-Standardized"), lwd = c(1, 3))
+		plot(dfyest$year, dfyest$eff.strata, type = "l", xlab = "Year",	ylab = "Stratification Efficiency")
+		lines(dfytadjest$year, dfytadjest$eff.strata, type = "l",lwd = 3)
+		par(mfrow = c(1, 1))
+		propse=dfyest$se.mean/dfyest$mean
+		propse[is.na(propse)]=0
+		propse2=dfytadjest$se.mean/dfytadjest$mean
+		propse2[is.na(propse2)]=0
+		plot(dfyest$year, propse, type = "l",xlab = "Year", ylab = "Standard Error/Mean", ylim = c(min(c((propse), (propse2))),max(c((propse), (propse2)))))
+		lines(dfytadjest$year, propse2, type = "l", lwd = 3)
+		plot(dfyest$year, dfyest$mean, type = "p", ylim = c(0, ylim1),xlab = "Year", ylab = "Traditional and Time-Standardized Estimates")
+		points(dfytadjest$year, dfytadjest$mean, type = "l")
+		cat("\nTime-Standardized Estimates\n")
+		print(dfytadjest)
+		assign("dfytadjest", dfytadjest, envir=.GlobalEnv)
+	}
+	#Comparison plot of traditional and time/depth-standardized estimates (remember both are stratified)
+	if(AdjOpt == 3) {
+		ylim1 = max(dfyest$mean)
+		ylim2 = max(dfytdadjest$mean)
+		if(ylim2 > ylim1)ylim1 = ylim2
+		par(mfrow = c(2, 1))
+		plot(dfyest$year, dfyest$eff.alloc, type = "l", xlab = "Year",ylab = "Set Allocation Efficiency")
+		lines(dfytdadjest$year, dfytdadjest$eff.alloc, type = "l",lwd = 3)
+		legend("bottomleft",legend = c("Traditional", "Depth/Time-Standardized"), lwd = c(1, 3))
+		plot(dfyest$year, dfyest$eff.strata, type = "l", xlab = "Year",	ylab = "Stratification Efficiency")
+		lines(dfytdadjest$year, dfytdadjest$eff.strata, type = "l",lwd = 3)
+		par(mfrow = c(1, 1))
+		propse=dfyest$se.mean/dfyest$mean
+		propse[is.na(propse)]=0
+		propse2=dfytdadjest$se.mean/dfytdadjest$mean
+		propse2[is.na(propse2)]=0
+		plot(dfyest$year, propse, type = "l",xlab = "Year", ylab = "Standard Error/Mean", ylim = c(min(c((propse), (propse2))),max(c((propse), (propse2)))))
+		lines(dfytdadjest$year, propse2, type = "l", lwd = 3)
+		plot(dfyest$year, dfyest$mean, type = "p", ylim = c(0, ylim1),xlab = "Year", ylab = "Traditional and Time/Depth-Standardized Estimates")
+		points(dfytdadjest$year, dfytdadjest$mean, type = "l")
+		cat("\nTime/Depth-Standardized Estimates\n")
+		print(dfytdadjest)
+		assign("dfytdadjest", dfytdadjest, envir=.GlobalEnv)
+	}
+	dev.off()
+	estvec = c(rep("Traditional", length(y)), rep("Depth-Adjusted", length(y)), rep("Time-Adjusted", length(y)), rep("Depth&Time-Adjusted", length(y)), rep("Restratified", length(y)))
+	outdfy = data.frame(estimation = estvec, year = rep(y, 5), mean = rep(nnn, 5), se.mean = rep(nnn, 5), lower = rep(nnn, 5), upper = rep(nnn, 5), total = rep(nnn, 5), se.tot = rep(nnn, 5), 
+		lower.tot = rep(nnn, 5), upper.tot = rep(nnn, 5), eff.alloc = rep(nnn, 5), eff.strata = rep(nnn, 5))
+	outdfy[, 2:12] = rbind(dfyest, dfyadjest, dfytadjest, dfytdadjest,dfyrestrat)
+	assign("outdfy", outdfy, envir = .GlobalEnv)
+	cat("\nFinished\n")
+	cat("\nTable(s) of survey statistics: outdfy\n")
+	cat("(save this file to another name if you want to keep it)\n")
+	system(paste("open ",getwd(),"/ssadjgraphs.pdf",sep=""))
+	cat("\nThe graphics ssadjgraphs.pdf file must be closed if you want to do another run. Save to a different name if you wish to keep it.\n")
+	list(c("nada"), "outdfy")
+}
+
+BSTRAP = 
+function(yyy)
+{
+	y = boot.strata(yyy, nresamp = 1000, method = "BWR")
+	boot.mean = mean(y$boot.means)
+	boot.se = sqrt(var(y$boot.means))
+	x1 = sum(y$boot.means < boot.mean)
+	x2 = sort(y$boot.means)[c(x1, x1 + 1)]
+	x3 = qnorm((x1 + ((boot.mean - x2[1])/(x2[2] - x2[1])))/length(y$boot.means))
+	a1 = pnorm(x3 + (x3 + qnorm(0.050000000000000003/2))/(1 - y$accel * (x3 + qnorm(0.050000000000000003/2))))
+	a2 = pnorm(x3 + (x3 + qnorm(1 - 0.050000000000000003/2))/(1 - y$accel * (x3 + qnorm(1 - 0.050000000000000003/2))))
+	a3 = pnorm(x3 + (x3 + qnorm(0.5))/(1 - y$accel * (x3 + qnorm(0.5))))
+	boot.ci = quantile(y$boot.means, probs = c(a1, a2, a3))
+	c(boot.mean, boot.se, boot.ci[1], boot.ci[2])
+}
+
+boot.strata = 
+function(data, nless = 0., nresamp = 1., method = c("RESCALE", "MIRROR-MATCH", "BWR", "NAIVE"))
+{
+	if(!inherits(data, "strata"))stop("Not a legitimate strata object")
+	call = match.call(expand = F)
+	method = match.arg(method)
+	res1 = data
+	res3 = summary(res1)
+	if(nresamp == 0.)stop("No resampling done.")
+	out = matrix(0., nrow = nresamp + 1., ncol = 2., dimnames = list(c("Actual", 1.:nresamp), c("Mean", "Variance")))
+	out[1.,  ] = c(res3$yst, (res3$se.yst)^2.)
+	if(method == "RESCALE") {
+		#RAO-Wu rescaling method
+		res1$nh = res1$nh - nless
+		for(i in 1.:nresamp) {
+			yhib = sapply(res1$yhi, rescale.boot, nless)
+			out[i + 1.,  ] = c(sum(res1$Wh * as.vector(sapply(yhib, mean)), na.rm = TRUE), (sum((((res1$Nh * (res1$Nh - res1$nh))/sum(res1$Nh)^2.) *
+				(as.vector(sapply(yhib, var))))/res1$nh, na.rm = TRUE)))
+		}
+	}
+	if(method == "MIRROR-MATCH") {
+		#Sitter's mirror-match method
+		#		Whs = unique(Strata)
+		#		for(i in seq(along = Wh))
+		#			Whi[c(Strata == Whs[i])] = Wh[i]/nh[i]
+		#		for(i in 1:nresamp) {
+		#			yhib = sample(unlist(yhi), replace = T, 
+		#				prob = Whi)
+		#			out[i + 1,  ] = c(mean(yhib), var(yhib)/
+		#				sum(nh))
+		#		}
+		#	Whi = rep(0, length(Strata))
+		stop("Mirror-match method not implemented yet.")
+	}
+	if(method == "BWR") {
+		#BWR method based on mirror match method for n_h^\prime=1.
+		fh = res1$nh/res1$Nh
+		kh = (res1$nh - 1.)/(1. - fh)
+		ph = ((1./kh) - (1./ceiling(kh)))/((1./floor(kh)) - (1./ceiling(kh)))
+		for(i in 1.:nresamp) {
+			yhib = bwr.boot(res1$yhi, kh, ph, sample, replace = T)
+			out[i + 1.,  ] = c(sum(res1$Wh * as.vector(sapply(yhib, mean)), na.rm = TRUE),
+			 (sum((((res1$Nh * (res1$Nh - as.vector(sapply(yhib, length))))/sum(res1$Nh)^2.) * (as.vector(sapply(yhib, var))))/as.vector(sapply(yhib, length)),na.rm = TRUE)))
+		}
+	}
+	if(method == "NAIVE") {
+		#Naive application of the iid bootstrap		
+		for(i in 1.:nresamp) {
+			yhib = sapply(res1$yhi, sample, replace = T)
+			out[i + 1.,  ] = c(sum(res1$Wh * as.vector(sapply(yhib, mean)), na.rm = TRUE), 
+			(sum((((res1$Nh * (res1$Nh - as.vector(sapply(yhib, length))))/sum(res1$Nh)^2.) * (as.vector(sapply(yhib, var))))/as.vector(sapply(yhib, length)),na.rm = TRUE)))
+		}
+	}
+	res = list(orig.mean = out[1., 1.], orig.var = out[1., 2.], boot.means = out[c(2.:(nresamp + 1.)), 1.], boot.vars = out[c(2.:(nresamp + 1.)), 2.], 
+		accel = accel.str(res1), call = call)
+	oldClass(res) = "boot"
+	res
+}
+
+stratify6 = 
+function(data, strata.group, species, subset = NULL, hydro = F, remove.h = F)
+{
+	if(!inherits(data, "strata.data")) stop("Not a legitimate strata data object")
+	species=data[,species]
+	strata = data$strata
+	tow.dist = data$tow.dist
+	tow.dist[is.na(tow.dist)] = 1.75
+	if(!is.null(subset)) strata[subset == F] = NA
+	if(hydro == F) {
+		species.s = (species * 1.75)/tow.dist
+	}else {
+		species.s = species
+	}
+	strata[is.na(match(strata, strata.group$strata))]=NA
+	if(remove.h == T) {
+		tempy = cbind(species.s, strata, temp)
+		tempy = na.omit(as.data.frame(tempy))
+	}else {
+		tempy = cbind(species.s, strata)
+		if(any(is.na(species.s)))tempy = (na.omit(as.data.frame(tempy)))
+		if(any(is.na(strata)))tempy = (na.omit(as.data.frame(tempy)))
+	}
+	species.s = as.vector(tempy[, 1.])
+	strata = as.vector(tempy[, 2.])
+	WH = strata.group$NH
+	na.strata = match(strata.group$strata, unique(strata))
+	WH[c(is.na(na.strata))]=NA
+	WH = (na.omit(as.data.frame(WH)))$WH
+	NH = WH
+	WH = (WH/sum(WH))
+	yhi = split(species.s, strata)
+	nh = as.vector(sapply(yhi, length))
+	res = list(yhi = yhi, Strata = sort(strata), Nh = NH, Wh = WH, nh = 
+		nh, descrip = "Stratified Survey Data")
+	oldClass(res) = "strata"
+	res
+}
+
+summary.strata = 
+function(object, alpha.t = 0.050000000000000003, effic = F, nopt = F)
+{
+	#	if(!inherits(object, "strata"))
+	#		stop("Not a legitimate strata object")
+	#R treats Nh as an integer in calculations that result in integer overflow, whereas S
+	# works in double precision; have to define Nh as double in R
+	object$Nh=as.double(object$Nh)
+	yh = as.vector(sapply(object$yhi, mean))
+	yst = sum(object$Wh * yh, na.rm = TRUE)
+	sh = as.vector(sapply(object$yhi, var))
+	se.yst = sqrt(sum((((object$Nh * (object$Nh - object$nh))/sum(object$Nh)^2.) * sh)/object$nh, na.rm = TRUE))
+	ah = (object$Nh * (object$Nh - object$nh))/object$nh
+	df.yst = (sum(ah * sh, na.rm = TRUE)^2.)/(sum(((ah * sh)^2.)/(object$nh - 1.), na.rm = TRUE))
+	ci.yst = yst + (c(qt(alpha.t/2., df.yst),  - qt(alpha.t/2., df.yst)) * se.yst)
+	if(effic == F) {
+		res = list(yst = yst, se.yst = se.yst, Yst = yst * sum(object$Nh), df.yst = df.yst, alpha = alpha.t, ci.yst = ci.yst, descrip = "Stratified Analysis")
+		options(digits = max(options()$digits - 5., 5.))
+		res
+	}else {
+		N = sum(object$Nh)
+		n = sum(object$nh)
+		vran = ((N - n)/(n * N)) * sum(object$Wh * sh, na.rm = TRUE)
+		effic.str = ((N - n)/(n * (N - 1.))) * (sum(object$Wh * (yh - yst)^2.) - sum((object$Wh * (1. - object$Wh) * sh)/object$nh, na.rm = TRUE))
+		vran = vran + effic.str
+		effic.alloc = sum(((1./n) - (object$Wh/object$nh)) * object$Wh * sh, na.rm = TRUE)
+		effic.str = (100. * effic.str)/vran
+		effic.alloc = (100. * effic.alloc)/vran
+		min.var = ((1./n) * sum(object$Wh * sqrt(sh), na.rm = TRUE)^2.) - sum(object$Wh * sh, na.rm = TRUE)/N
+		if(nopt) {
+			n.opt = (((sqrt(sapply(object$yhi, var)) * object$Wh)/sum(sqrt(sapply(object$yhi, var)) * object$Wh)) * sum(object$nh))
+			n.opt = cbind(object$nh, comp.opt = round(n.opt))
+			if(sum(n.opt[, 1.]) > sum(n.opt[, 2.]))
+				n.opt[n.opt[, 2.] == min(n.opt[, 2.]), 2.] = n.opt[n.opt[, 2.] == min(n.opt[, 2.]),2.] + (sum(n.opt[, 1.]) - sum(n.opt[, 2.]))
+			if(sum(n.opt[, 1.]) < sum(n.opt[, 2.]))
+				n.opt[n.opt[, 2.] == max(n.opt[, 2.]), 2.] = n.opt[n.opt[, 2.] == max(n.opt[, 2.]),2.] - (sum(n.opt[, 1.]) - sum(n.opt[, 2.]))
+			n.opt = cbind(n.opt, (100. * (((n.opt[, 1.] - n.opt[, 2.])^2.)/n.opt[, 1.]))/sum(object$nh))
+			comp.opt[comp.opt < 2.] = 2.
+			comp.opt[comp.opt == max(comp.opt)] = comp.opt[comp.opt == max(comp.opt)] - (sum(comp.opt) - sum(n.opt[, 1.]))
+			n.opt = cbind(n.opt, comp.opt)
+			n.opt = cbind(n.opt, (100. * (((n.opt[, 4.] - n.opt[, 2.])^2.)/n.opt[, 4.]))/sum(object$nh))
+			n.opt = rbind(n.opt, apply(n.opt, 2., sum))
+			dimnames(n.opt) = list(c(as.character(unique(object$Strata)), "Total"), c("Observed", "Optimal", "%Increase(Var)", "Compromise", "%Increase(Var)"))
+			res = list(yst = yst, se.yst = se.yst, Yst = yst * sum(object$Nh), df.yst = df.yst, alpha = alpha.t, ci.yst = ci.yst, 
+				effic.alloc = effic.alloc, effic.str = effic.str, var.ran = vran, max.eff = (100. * (vran - min.var))/vran, n.opt = n.opt, descrip = "Stratified Analysis")
+			options(digits = max(options()$digits - 5., 5.))
+			res
+		}else {
+			res = list(yst = yst, se.yst = se.yst, Yst = yst * sum(object$Nh), df.yst = df.yst, alpha = alpha.t, ci.yst = ci.yst, 
+				effic.alloc = effic.alloc, effic.str = effic.str, var.ran = vran, max.eff = (100. * (vran - min.var))/vran, descrip = "Stratified Analysis")
+			options(digits = max(options()$digits - 5., 5.))
+			res
+		}
+	}
+}
+

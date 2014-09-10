@@ -1,0 +1,591 @@
+#Desktop R version of SSDiagnostics
+#M Fowler
+#July 2014
+#Removed restratification and length fan options for desktop version.
+SSDiagnostics = 
+function(query1,query2,strata,sex,doWB,doNA,doG,G1s,G1l,G2s,G2l,doC,uid,pw)
+{
+	#		Get (or create) the appropriate survey data for the selected stock. 
+	#		Conduct simple diagnostics to reconcile length data with adjusted total numbers. 
+	#		Flag instances of single samples for strata, and how relevant these strata may be.
+	#		Examine the sampling and stock depth distributions. Output intended to enable
+	#	        the user to easily define adjustment factors to standardize estimates with respect to depth.
+	#		Look for possible catchability trends related to local time. Output intended to enable
+	#	        the user to easily define adjustment factors to standardize estimates with respect to time.
+	#		Produce a temperature regime time series.
+	#
+	#
+	#
+	PreConvertATC = FALSE
+	PreConvertTEL = FALSE
+	PreConvertGulf = FALSE
+	doweights = FALSE
+	donumbers = FALSE
+	dogroup1 = FALSE
+	dogroup2 = FALSE
+	if(length(doC)>0) {
+	PreConvertATC = TRUE
+	PreConvertTEL = TRUE
+	PreConvertGulf = TRUE
+	}
+	if(length(doG)>0) {
+	dogroup1 = TRUE
+	dogroup2 = TRUE
+	}
+	if(length(doWB)>0)doweights = TRUE
+	if(length(doNA)>0)donumbers = TRUE
+	GroupBot1 = as.numeric(G1s)
+	GroupTop1 = as.numeric(G1l)
+	GroupBot2 = as.numeric(G2s)
+	GroupTop2 = as.numeric(G2l)
+	sexfilter = switch(sex,
+		Combined = 0,
+		Males = 1,
+		Females = 2)
+	stratafilter = as.numeric(unlist(strsplit(strata," ")))
+	###Processing of extraction revised July 2014 to address change to database design. Originally the database posed GSCAT record per set per species. In 2006
+	# a SIZE_CLASS split (class 1 or 2 only) for GSCAT was accomodated. The weights and numbers have to be added across SIZE_CLASS to be correct
+	# with respect to the single numbers at length record.
+	options(stringsAsFactors = FALSE)
+	dsquery=paste("SELECT * FROM fowler.",query2," where series='",query1,"'",sep="");
+	channel<-odbcConnect(uid=uid,pw=pw,dsn='bank',case='nochange',rows_at_time=1)
+	stock<-sqlQuery(channel,dsquery)
+	names(stock) = c("species","series","sex","vessel", "cruise", "set.no", "slat", "slong", 
+		"year", "strata", "a.depth", "min.depth", "max.depth", 
+		"s.depth", "temperature", "salinity", "tow.dist", "loctime",
+		"total.no", "total.wgt", "c", "c0", "c1", "c2", "c3", "c4",
+		"c5", "c6", "c7", "c8", "c9", "c10", "c11", "c12", "c13",
+		"c14", "c15", "c16", "c17", "c18", "c19", "c20", "c21", "c22",
+		"c23", "c24", "c25", "c26", "c27", "c28", "c29", "c30", "c31",
+		"c32", "c33", "c34", "c35", "c36", "c37", "c38", "c39", "c40",
+		"c41", "c42", "c43", "c44", "c45", "c46", "c47", "c48", "c49",
+		"c50", "c51", "c52", "c53", "c54", "c55", "c56", "c57", "c58",
+		"c59", "c60", "c61", "c62", "c63", "c64", "c65", "c66", "c67",
+		"c68", "c69", "c70", "c71", "c72", "c73", "c74", "c75", "c76",
+		"c77", "c78", "c79", "c80", "c81", "c82", "c83", "c84", "c85",
+		"c86", "c87", "c88", "c89", "c90", "c91", "c92", "c93", "c94",
+		"c95", "c96", "c97", "c98", "c99", "c100", "c101", "c102",
+		"c103", "c104", "c105", "c106", "c107", "c108", "c109", "c110",
+		"c111", "c112", "c113", "c114", "c115", "c116", "c117", "c118",
+		"c119", "c120", "c121", "c122", "c123", "c124", "c125", "c126",
+		"c127", "c128", "c129", "c130", "c131", "c132", "c133", "c134",
+		"c135", "c136", "c137", "c138", "c139", "c140", "c141", "c142",
+		"c143", "c144", "c145", "c146", "c147", "c148", "c149", "c150")
+stock$species[is.na(stock$species)] = sort(unique(stock$species))[1]
+#Tossing non-standard strata from surveys
+stock = stock[is.na(stock$strata)==F,]
+stock=stock[stock$strata>0,]
+if(stock$series[1]=='SPRING ')stock = stock[(as.numeric(stock$strata)>=443 & as.numeric(stock$strata)<=495),]
+if(stock$series[1]=='SUMMER ')stock = stock[(as.numeric(stock$strata)>=440 & as.numeric(stock$strata)<=495),]
+if(stock$series[1]=='FALL   ')stock = stock[(as.numeric(stock$strata)>=440 & as.numeric(stock$strata)<=495),]
+if(stock$series[1]=='4VWCOD ')stock = stock[(as.numeric(stock$strata)>=401 & as.numeric(stock$strata)<=411),]
+if(stock$series[1]=='GEORGES')stock = stock[(as.numeric(stock$strata)>=501 & as.numeric(stock$strata)<=508),]
+if(stock$series[1]=='GULF   ') {
+stock = stock[(as.numeric(stock$strata)>=401 & as.numeric(stock$strata)<=442),]
+stock$strata[stock$strata==401] = 412
+stock$strata[stock$strata==402] = 413
+stock$strata[stock$strata==403] = 414
+}
+#User subsetting selection of strata (if going with defaults the whole strata list of 91 strata is passed in, so just check if the length is 91) 
+if(length(stratafilter) != 91) stock = stock[match(stock$strata,stratafilter,nomatch=0) > 0,]
+	survey = stock$series[1]
+	db = stock$species[1]
+	cat("\n",survey, "survey diagnostics for the selected ", db, " stock.","\n")
+		if(doweights == T)cat("\n Variable name for Weight Estimates = weight.\n")
+		if(donumbers == T)cat("Variable name for Number Estimates = number.\n")
+		if(dogroup1 == T)cat("Variable name for Group One Number Estimates = smaller.\n")
+		if(dogroup1 == T)cat("   Group One comprises fish between ", GroupBot1, " and ", GroupTop1, " cm.\n")
+		if(dogroup2 == T)cat("Variable name for Group Two Number Estimates = bigger.\n")
+		if(dogroup2 == T)cat("   Group Two comprises fish between ", GroupBot2, " and ", GroupTop2, " cm.\n\n")
+#Pick the sex. But do truthing diagnostics first.
+xtest = stock
+xtest$lentot = rowSums(stock[, 21:172], na.rm = T)
+x0 = xtest[xtest$sex==0,]
+x1 = xtest[xtest$sex==1,]
+x2 = xtest[xtest$sex==2,]
+sexdf = data.frame(Year=x0$year,Strata=x0$strata,Set=x0$set.no,X0=x0$lentot,X1=x1$lentot,X2=x2$lentot)
+AdjustedMales = sexdf$X1+((sexdf$X0-(sexdf$X1+sexdf$X2))*(sexdf$X1/(sexdf$X1+sexdf$X2)))
+AdjustedFemales = sexdf$X2+((sexdf$X0-(sexdf$X1+sexdf$X2))*(sexdf$X2/(sexdf$X1+sexdf$X2)))
+AdjustedMales[is.na(AdjustedMales)] = 0
+AdjustedFemales[is.na(AdjustedFemales)] = 0
+sexdf$AdjustedMales = AdjustedMales
+sexdf$AdjustedFemales = AdjustedFemales
+sexdf$Sexed = (sexdf$X1+sexdf$X2)
+sexdf$AdjustedSexed = (sexdf$AdjustedMales+sexdf$AdjustedFemales)
+SexTable = aggregate(sexdf[,c("X0","Sexed","AdjustedSexed")],list(Year=sexdf$Year),sum)
+names(SexTable)=c("Year","Numbers_at_Length","Sexed","AdjustedSexed")
+SexTable$ProblemFlag = rep("   ",dim(SexTable)[1])
+SexTable$ProblemFlag[((SexTable$AdjustedSexed/SexTable$Numbers_at_Length)<.9)] = '***'
+cat("Discrepancies Between Adjusted Numbers at Length and Sexed.","\n")
+cat("[Potential problems for deriving estimates separately by sex are flagged with an ***. This will denote any year where set-specific sexing covers less than 90% of the fish sampled.]","\n","\n")
+print(SexTable)
+if(sexfilter == 0) stock = stock[stock$sex == 0,]
+if(sexfilter == 1) {
+stock = stock[stock$sex == 1,]
+bumpfac = sexdf$AdjustedMales/sexdf$X1
+bumpfac[is.na(bumpfac)] = 0
+stock[, 21:172] = stock[, 21:172]*(bumpfac)
+stock$total.no = as.numeric(rowSums(stock[, 21:172], na.rm = T))
+}
+if(sexfilter == 2) {
+bumpfac = sexdf$AdjustedFemales/sexdf$X2
+bumpfac[is.na(bumpfac)] = 0
+stock[, 21:172] = stock[, 21:172]*(bumpfac)
+stock$total.no = as.numeric(rowSums(stock[, 21:172], na.rm = T))
+}
+	stock$min.depth = stock$min.depth * 1.8500000000000001
+	stock$max.depth = stock$max.depth * 1.8500000000000001
+	stock$a.depth[stock$a.depth != (-99)] = stock$a.depth[stock$a.depth !=(-99)] * 1.8500000000000001
+	stock$a.depth[stock$a.depth == (-99)] = (stock$min.depth[stock$a.depth == (-99)] + stock$max.depth[stock$a.depth == (-99)])/2
+	stock$s.depth[stock$s.depth == (-99.900000000000006)] = NA
+	stock$temperature[stock$temperature == (-99.989999999999995)] = NA
+	stock$salinity[stock$salinity == (-99.998999999999995)] = NA
+	#Create a character strata variable to enable displaying long merger ids
+	stock$strata = as.character(stock$strata)
+	#Ascertain the last column (last length) of the dataframe before creating new variables
+	c150 = dim(stock)[2]
+	#Decimal degrees
+	stock$lat = floor(stock$slat/100) + (((stock$slat/100) - floor(stock$slat/100))/0.59999999999999998)
+	stock$long = floor(stock$slong/100) + (((stock$slong/100) - floor(stock$slong/100))/0.59999999999999998)
+#Apply catchability coefficients to weights & numbers
+#Keeping an uncalibrated dataset for comparison. Not necessary for the application, just facilitates batch runs on my desktop.
+uncal=stock
+#Scotia/Fundy surveys
+#NOTE calibrations apply ONLY to NUMBERS - ***NOT WEIGHTS***
+#calibrations can be length-specific
+if(stock$series[1]=='SUMMER ' | stock$series[1]=='SPRING ' | stock$series[1]=='FALL   ' | stock$series[1]=='4VWCOD ' | stock$series[1]=='GEORGES') {
+	if(PreConvertATC == T) {
+	if(stock$species[1]==10)stock[stock$vessel=='HAM',c(19,21:c150)] = stock[stock$vessel=='HAM',c(19,21:c150)]*0.8
+	if(stock$species[1]==10)stock[stock$vessel=='ATC',c(19,21:c150)] = stock[stock$vessel=='ATC',c(19,21:c150)]*0.8
+	if(stock$species[1]==11)stock[stock$vessel=='ATC',c(19,21:c150)] = stock[stock$vessel=='ATC',c(19,21:c150)]*1.2
+	if(stock$species[1]==40)stock[stock$vessel=='ATC',c(19,21:50)] = stock[stock$vessel=='ATC',c(19,21:50)]*0.7
+	if(stock$species[1]==41)stock[stock$vessel=='HAM',c(19,21:c150)] = stock[stock$vessel=='HAM',c(19,21:c150)]*0.8
+	if(stock$species[1]==41)stock[stock$vessel=='ATC',c(19,21:c150)] = stock[stock$vessel=='ATC',c(19,21:c150)]*0.8
+	if(stock$species[1]==42)stock[stock$vessel=='HAM',c(19,21:c150)] = stock[stock$vessel=='HAM',c(19,21:c150)]*0.8
+	if(stock$species[1]==42)stock[stock$vessel=='ATC',c(19,21:c150)] = stock[stock$vessel=='ATC',c(19,21:c150)]*0.8
+	}
+	if(PreConvertTEL == T) {
+#NOTE Standardization will also eliminate any discrepancies between recorded total number and sums of numbers at length; look out for data errors on Teleost
+lengthvector=seq(1,150)
+dielvector=rep(1,length(stock$loctime))
+#the diurnal effects are all differences in catchability in darkness, so never a daylight adjustment
+dielvector[dielvector<2030 & dielvector>630]=0
+stock$dielvector=dielvector
+#reminder line to identify the coefficients
+#if(stock$species[1]==10)calcoefs=exp(Intercept+(DielCoef*DielValue)+(DepthCoef*DepthValue)+(LinLenCoef*LengthValue)+(QuadLenCoef*LengthValue^2))
+#Teleost standardization takes about 2 minutes interactively, oddly much faster wrapped in this function; cannot be efficient (sapply instead of loop) as it takes too much memory (32 GB RAM not enough)
+#following comment lines are example of efficient code if we had enough computer for it
+#lengthmat=matrix(lengthvector,dim(stock[stock$vessel=='TEL',])[1],150,byrow=TRUE)
+#if(stock$species[1]==220)stock[stock$vessel=='TEL',c(23:c150)] = stock[stock$vessel=='TEL',c(23:c150)]*exp(sapply(2.53+(0.0*stock$dielvector[stock$vessel=='TEL'])+(0.0*stock$a.depth[stock$vessel=='TEL']),"+",(-0.0336*lengthmat)+(0.0*(lengthmat^2))))
+for (i in 1:dim(stock)[1]) {
+if(stock$species[1]==10 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.563*stock$dielvector[i])+(.009*stock$a.depth[i])+(-0.04359*t(lengthvector))+(0.00038*(t(lengthvector)^2)))
+if(stock$species[1]==11 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.382+(-0.793*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.0*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==14 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(-0.31*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.009*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==16 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-6.395+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.19*t(lengthvector))+(-0.0015*(t(lengthvector)^2)))
+if(stock$species[1]==23 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-1.252+(0.517*stock$dielvector[i])+(0.007*stock$a.depth[i])+(0.058*t(lengthvector))+(-0.00174*(t(lengthvector)^2)))
+if(stock$species[1]==31 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.029*t(lengthvector))+(-0.00067*(t(lengthvector)^2)))
+if(stock$species[1]==40 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.464+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(-0.014*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==41 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(1.854+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(-0.138*t(lengthvector))+(0.0024*(t(lengthvector)^2)))
+if(stock$species[1]==42 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(-0.009*stock$a.depth[i])+(0.02*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==60 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.124*t(lengthvector))+(-0.00466*(t(lengthvector)^2)))
+if(stock$species[1]==62 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(1.277*stock$dielvector[i])+(-0.02*stock$a.depth[i])+(0.0*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==112 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(-0.098*t(lengthvector))+(0.00334*(t(lengthvector)^2)))
+if(stock$species[1]==123 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(-0.0223*stock$a.depth[i])+(0.283*t(lengthvector))+(-0.00502*(t(lengthvector)^2)))
+if(stock$species[1]==220 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(2.53+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(-0.0336*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==304 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-1.403+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.14*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==320 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(-0.703*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.0*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==350 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.559+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.0*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==610 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-3.79+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.248*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+if(stock$species[1]==622 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-5.98+(-1.06*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.456*t(lengthvector))+(-0.0068*(t(lengthvector)^2)))
+if(stock$species[1]==623 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(-7.24+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(1.063*t(lengthvector))+(-0.0353*(t(lengthvector)^2)))
+if(stock$species[1]==4511 & stock$vessel[i]=='TEL')stock[i,c(23:c150)] = stock[i,c(23:c150)]*exp(0.0+(0.0*stock$dielvector[i])+(0.0*stock$a.depth[i])+(0.021*t(lengthvector))+(0.0*(t(lengthvector)^2)))
+#replace uncalibrated totno with sum of standardized numbers at length
+if(stock$vessel[i]=='TEL')stock$total.no[i]=sum(stock[i,c(23:c150)])
+}
+}
+}
+#Just for the Gulf survey, reconcile repeat sets. This usually means averaging the adjusted weights
+# and numbers. For some species we instead use the first set (white hake, winter flounder). Other
+# potentially 'mean' variables - depth variables, temperature, salinity, loctime, slat, slong - are
+# currently just taken from set 1.
+if(stock$series[1]=='GULF   ') {
+if(PreConvertGulf == T) {
+dekerec = rep(0,dim(stock)[1])
+dekerec[stock$year==1995 & stock$set.no==127] = 1
+if(stock$species[1]==10)stock = stock[dekerec==0,]
+if(stock$species[1]==10)stock[(stock$species==10 & stock$vessel=='PRI'),c(19,21:c150)] = stock[(stock$species==10 & stock$vessel=='PRI'),c(19,21:c150)]*1.31
+stock$total.wgt[(stock$species==10 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==10 & stock$vessel=='PRI')]*1.31
+xxxdepth = stock$a.depth[(stock$species==10 & stock$vessel=='HAM')]/1.85
+xxxsigma = 0.01970883-(0.00038396*xxxdepth)+(0.00000278*xxxdepth**2)
+if(stock$species[1]==10)stock[(stock$species==10 & stock$vessel=='HAM'),c(19,21:c150)] = stock[(stock$species==10 & stock$vessel=='HAM'),c(19,21:c150)]*(exp(0.491908-0.004609*xxxdepth))*(exp(xxxsigma*55/108))
+stock$total.wgt[(stock$species==10 & stock$vessel=='HAM')] = stock$total.wgt[(stock$species==10 & stock$vessel=='HAM')]*(exp(0.491908-0.004609*xxxdepth))*(exp(xxxsigma*55/108))
+stock$total.wgt[(stock$species==23 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==23 & stock$vessel=='PRI')]/.553
+if(stock$species[1]==40)stock[(stock$species==40 & stock$vessel=='PRI'),c(19,21:c150)] = stock[(stock$species==40 & stock$vessel=='PRI'),c(19,21:c150)]/.571
+stock$total.wgt[(stock$species==40 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==40 & stock$vessel=='PRI')]/.685
+if(stock$species[1]==41)stock[(stock$species==41 & (stock$loctime>=700 | stock$loctime<1900)),c(19,21:c150)] = stock[(stock$species==41 & (stock$loctime>=700 | stock$loctime<1900)),c(19,21:c150)]*2.1
+stock$total.wgt[(stock$species==41 & (stock$loctime>=700 | stock$loctime<1900))] = stock$total.wgt[(stock$species==41 & (stock$loctime>=700 | stock$loctime<1900))]*2.1
+if(stock$species[1]==41)stock[(stock$species==41 & stock$vessel=='NED' & (stock$loctime<700 | stock$loctime>=1900)),c(19,21:c150)] = stock[(stock$species==41 & stock$vessel=='NED' & (stock$loctime<700 | stock$loctime>=1900)),c(19,21:c150)]*.66
+stock$total.wgt[(stock$species==41 & stock$vessel=='NED' & (stock$loctime<700 | stock$loctime>=1900))] = stock$total.wgt[(stock$species==41 & stock$vessel=='NED' & (stock$loctime<700 | stock$loctime>=1900))]*.66
+if(stock$species[1]==43)stock[(stock$species==43 & stock$vessel=='PRI'),c(19,21:c150)] = stock[(stock$species==43 & stock$vessel=='PRI'),c(19,21:c150)]/.433
+stock$total.wgt[(stock$species==43 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==43 & stock$vessel=='PRI')]/.462
+if(stock$species[1]==42)stock[(stock$species==42 & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)] = stock[(stock$species==42 & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)]*.323
+stock$total.wgt[(stock$species==42 & (stock$loctime<700 | stock$loctime>1900))] = stock$total.wgt[(stock$species==42 & (stock$loctime<700 | stock$loctime>1900))]*.545
+if(stock$species[1]==42)stock[(stock$species==42 & stock$vessel=='PRI'),c(19,21:c150)] = stock[(stock$species==42 & stock$vessel=='PRI'),c(19,21:c150)]/.673
+stock$total.wgt[(stock$species==42 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==42 & stock$vessel=='PRI')]/.524
+if(stock$species[1]==63)stock[(stock$species==63 & stock$vessel=='PRI'),c(19,21:c150)] = stock[(stock$species==63 & stock$vessel=='PRI'),c(19,21:c150)]/.406
+stock$total.wgt[(stock$species==63 & stock$vessel=='PRI')] = stock$total.wgt[(stock$species==63 & stock$vessel=='PRI')]/.397
+if(stock$species[1]>=200 & stock$species<=204)stock[((stock$species>=200 & stock$species<=204) & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)] = stock[((stock$species>=200 & stock$species<=204) & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)]*.428
+stock$total.wgt[((stock$species>=200 & stock$species<=204) & (stock$loctime<700 | stock$loctime>1900))] = stock$total.wgt[((stock$species>=200 & stock$species<=204) & (stock$loctime<700 | stock$loctime>1900))]*.612
+if(stock$species[1]==300)stock[(stock$species==300 & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)] = stock[(stock$species==300 & (stock$loctime<700 | stock$loctime>1900)),c(19,21:c150)]*.191
+stock$total.wgt[(stock$species==300 & (stock$loctime<700 | stock$loctime>1900))] = stock$total.wgt[(stock$species==300 & (stock$loctime<700 | stock$loctime>1900))]*.343
+}
+stock$repsets = rep(0,dim(stock)[1])
+stock$baseno = rep(0,dim(stock)[1])
+repsets = read.table("D:\\assess\\SurveyDataAnalysisR\\repsets.dat",header = T)
+for (i in 1:dim(repsets)[1]) {
+if(repsets$year[i] >= 1998 | repsets$year[i] == 1984)next
+stock$repsets[stock$vessel==repsets$vessel[i] & stock$cruise==repsets$cruise[i] & stock$year==repsets$year[i] & stock$set.no==repsets$baseno[i]] = 1
+stock$repsets[stock$vessel==repsets$vessel[i] & stock$cruise==repsets$cruise[i] & stock$year==repsets$year[i] & stock$set.no==repsets$repno[i]] = 2
+stock$baseno[stock$vessel==repsets$vessel[i] & stock$cruise==repsets$cruise[i] & stock$year==repsets$year[i] & stock$set.no==repsets$repno[i]] = repsets$baseno[i]
+}
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no<=18] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no<=18] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=20 & stock$set.no<=21] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=20 & stock$set.no<=21] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=24 & stock$set.no<=27] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=24 & stock$set.no<=27] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=29 & stock$set.no<=39] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=29 & stock$set.no<=39] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=41 & stock$set.no<=42] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=41 & stock$set.no<=42] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=44 & stock$set.no<=55] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=44 & stock$set.no<=55] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=57 & stock$set.no<=60] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=57 & stock$set.no<=60] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=62 & stock$set.no<=68] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=62 & stock$set.no<=68] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=69 & stock$set.no<=70] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=69 & stock$set.no<=70] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=71 & stock$set.no<=71] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=71 & stock$set.no<=71] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=72 & stock$set.no<=72] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=72 & stock$set.no<=72] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=73 & stock$set.no<=78] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=73 & stock$set.no<=78] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=80 & stock$set.no<=80] = 1
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=80 & stock$set.no<=80] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='PRI' & stock$set.no>=100 & stock$set.no<=100] = 2
+stock$repsets[stock$year==1985 & stock$vessel=='HAM' & stock$set.no>=100 & stock$set.no<=100] = 1
+repblock = stock[stock$repsets>0,]
+repblock$baseno[repblock$baseno==0] = repblock$set.no
+repblock = repblock[order(repblock$year,repblock$baseno,repblock$repsets),]
+aveblock = aggregate(repblock[,c(19:c150)],list(repblock$year,repblock$baseno),mean)
+if(stock$species[1]==12 | stock$species[1]==43)aveblock = repblock[repblock$repsets==1,c(9,(c150+4),19:c150)]
+stock = stock[stock$repsets<2,]
+for (i in 1:dim(aveblock)[1]) {
+stock[(stock$year==aveblock[i,1] & stock$set.no==aveblock[i,2]),c(19:c150)] = aveblock[i,3:dim(aveblock)[2]]
+}
+stock = stock[,1:(c150+2)]
+}
+	###The length groups could reflect any number of rationales (catchability, maturity, etc) so use ambiguous labels
+	stock$smaller = as.numeric(apply(stock[, ((22 + as.numeric(GroupBot1)):(22 + as.numeric(GroupTop1)))], 1, sum))
+	stock$bigger = as.numeric(apply(stock[, ((22 + as.numeric(GroupBot2)):(22 + as.numeric(GroupTop2)))], 1, sum))
+	#The specific length counts are pre-adjusted (standardized) during database creation. The STRAP software assumes
+	#that inputs are unstandardized like total.wgt and total.no, so convert the group counts back to
+	#unstandardized form for STRAP
+	stock$rawsmall = stock$smaller * (stock$tow.dist/1.75)
+	stock$rawbig = stock$bigger * (stock$tow.dist/1.75)
+	#Create strata object appropriate to stock
+	###PATHING NOTE. Location will change. So will contents as other surveys added.
+	stratatable = read.table("D:\\assess\\SurveyDataAnalysisR\\ShelfStrata.dat",header = T)
+	if(stock$series[1]=='GULF   ') stratatable = read.table("D:\\assess\\SurveyDataAnalysisR\\GulfStrata.dat",header = T)
+	stratatable$strata = as.character(stratatable$strata)
+	strata.stock = stratatable[match(sort(unique(stock$strata)), stratatable$strata, nomatch = NA, incomparables = F),  ]
+	strata.stock=strata.stock[!is.na(strata.stock$NH),]
+	###Remember to use the unstandardized total.wgt, total.no, rawfishery, rawprerec values in STRAP-derived functions (assumes
+	###the input has not yet been standardized). Use standardized weight, number, bigger, smaller values elsewhere.
+	stock$weight = stock$total.wgt * (1.75/stock$tow.dist)
+	stock$number = stock$total.no * (1.75/stock$tow.dist)
+	###Compute annual totals by length groups and add to stock dataframe (gives each set observation a parallel total
+	###value for that year)
+	ytotwt = tapply(stock$weight, c(stock$year), sum)
+	ytot = tapply(stock$number, c(stock$year), sum)
+	if(dogroup1 == T)ysmall = tapply(stock$smaller, c(stock$year), sum)
+	if(dogroup2 == T)ybig = tapply(stock$bigger, c(stock$year), sum)
+	if(dogroup1 == T)smallyeartot = data.frame(year = as.numeric(names(ysmall)),smallyrtot = ysmall)
+	if(dogroup2 == T)bigyeartot = data.frame(year = as.numeric(names(ybig)), bigyrtot = ybig)
+	yeartot = data.frame(year = as.numeric(names(ytot)), yrtot = ytot)
+	yeartotwt = data.frame(year = as.numeric(names(ytotwt)), yrtotwt = ytotwt)
+	for(i in min(stock$year):max(stock$year)) {
+		stock$yrtot[stock$year == i] = yeartot$yrtot[yeartot$year ==i]
+		if(dogroup1 == T)stock$smallyrtot[stock$year == i] = smallyeartot$smallyrtot[smallyeartot$year == i]
+		if(dogroup2 == T)stock$bigyrtot[stock$year == i] = bigyeartot$bigyrtot[bigyeartot$year == i]
+		stock$yrtotwt[stock$year == i] = yeartotwt$yrtotwt[yeartotwt$year == i]
+	}
+	###Summarize depth into 10m zones, temperature into 1 degree zones, time into 1 hour zones
+	stock$dep10m = round((stock$a.depth/10), 0) * 10
+	stock$temp1d = round(stock$temperature, 0)
+	stock$timehr = round(floor(stock$loctime/100) + ((stock$loctime/100) - floor(stock$loctime/100))/0.59999999999999998)
+	stock$timehr[stock$timehr == 24] = 0
+	###Check for compatibility between total number of fish and summed total across lengths. Disregard
+	###any total between summed floors and summed ceilings of the length-specific counts - allow
+	###for lots of precison (rounding) and minor human errors, we omly care about serious discrepancies.
+	###Include unmeasured fish (c,c0) and skip years with no measured fish.
+	if(sexfilter == 0) {
+	lengthfloor = apply(floor(stock[, 21:172]), 1, sum, na.rm = T)
+	lengthceiling = apply(ceiling(stock[, 21:172]), 1, sum, na.rm = T)
+	metyr = tapply(lengthceiling, c(stock$year), sum)
+	lenyeartot = data.frame(year = as.numeric(names(metyr)), yrtot = metyr)
+	suspects = stock[(stock$number < lengthfloor | stock$number > lengthceiling),  ]
+	for(i in min(stock$year):max(stock$year)) {
+		if(is.na(lenyeartot$yrtot[lenyeartot$year == i])) next
+		if(lenyeartot$yrtot[lenyeartot$year == i] == 0)	suspects = suspects[suspects$year != i,  ]
+	}
+	probrecs = data.frame(Vessel = suspects$vessel, Cruise = suspects$cruise, Year = suspects$year, Strata = suspects$strata,
+				 Set = suspects$set.no, RawNumber = suspects$total.no, SummedLengths = (suspects$rawbig + suspects$rawsmall))
+	cat("\n Discrepancies Between Recorded Total Numbers and Summed Numbers at Length.","\n","\n")
+	print(probrecs)
+	totbyyr = tapply(stock$total.no, c(stock$year), sum)
+	UnAdjLen = rowSums(stock[, 21:172], na.rm = T) * (stock$tow.dist/1.75)
+	metbyyr = tapply(UnAdjLen, c(stock$year), sum)
+	lengthsum = data.frame(Year = as.numeric(names(metbyyr)), TotalNumber = totbyyr, Measured = round(metbyyr))
+	cat("\n Annual Summaries of Recorded Total Numbers and Summed Numbers Measured.","\n","\n")
+	print(lengthsum,row.names=F)
+	}
+	###Plot mean percents of survey numbers or biomass versus depth, temperature, local time.
+	###Produce polynomial regressions with 2 to 5 degrees of freedom and plot the predicted lines.
+	###Four estimates (wtprop,prop,bprop,sprop), four plots per estimate (1 to 4 df), three
+	###variables (dep10m,temp1d,timehr)
+	pdf(file=paste(getwd(),"/ssdiagraphs.pdf",sep=""),width=6.5,height=8)
+	par(mfrow = c(2, 2))
+	plab = c("Weights", "Numbers", "Group One Numbers", "Group Two Numbers")
+	###Use same scale for all plots. This gives a visual cue on the relative relevance of effects.
+	###For weights, numbers, small and big fish numbers
+	###Point the user to the data.[Excel table in Web version]
+	for(i in 1:4) {
+		###Compute percent of numbers or biomass each observation contributes to the annual total
+		if(i == 1 & doweights == T) stock$est = stock$weight
+		if(i == 2 & donumbers == T)stock$est = stock$number
+		if(i == 3 & dogroup1 == T)stock$est = stock$smaller
+		if(i == 4 & dogroup2 == T)stock$est = stock$bigger
+		if(i == 1 & doweights == F)next
+		if(i == 2 & donumbers == F)next
+		if(i == 3 & dogroup1 == F)next
+		if(i == 4 & dogroup2 == F)next
+		###Determine maximum contribution per depth, temperature, time breaks to fix the scale across plots
+		t1 = tapply(stock$est, c(stock$dep10m), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$dep10m), sum)
+		t1 = (max(nnn)/nnn) * t1
+		t1 = t1/sum(t1)
+		t2 = tapply(stock$est, c(stock$temp1d), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$temp1d), sum)
+		t2 = (max(nnn)/nnn) * t2
+		t2 = t2/sum(t2)
+		t3 = tapply(stock$est, c(stock$timehr), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$timehr), sum)
+		t3 = (max(nnn)/nnn) * t3
+		t3 = t3/sum(t3)
+		ymax = max(c(t1, t2, t3)) + 0.10000000000000001
+		###Compute relative contribution per depth break (then temperature, then time). Add the estimates up
+		###for each depth zone, then use the maximum N of the depth zones to bump the totals up (standardize
+		###for numbers of observations). Divide the standardized totals per depth zone by the grand total
+		###across depth zones to get relative contribution (as a proportion) by depth zone. 
+		###Predicted lines can have negative values, so turn off warnings (err = -1) during plotting. 
+		ttt = tapply(stock$est, c(stock$dep10m), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$dep10m), sum)
+		blowup = max(nnn)
+		stanttt = (blowup/nnn) * ttt
+		depthprop = stanttt/sum(stanttt)
+		standat = data.frame(prop = depthprop, dep10m = sort(as.numeric(names(depthprop))), nnn = nnn)
+		assign("standat", standat, envir=.GlobalEnv)
+		###For each regression option, plot the relative contributions and prediction line. Black-fill
+		###contributions supported by 25 or more observations.
+		for(j in 2:5) {
+			modexp = paste("glm(prop ~ poly(dep10m,", j, "), data = standat, na.action = na.omit, weights = nnn)",collapse = "", sep = "")
+			mainmod = eval(parse(text = modexp))
+			sigmeanpred = as.data.frame(predict(mainmod, type = "link", se.fit = T))
+			sigmeanfit = tapply(sigmeanpred$fit, list(standat$dep10m[is.na(standat$dep10m) == F]), mean,na.rm = T)
+			plot(as.numeric(names(depthprop[nnn >= 1])), depthprop[nnn >= 1], ylim = c(0, ymax), xlab = "Depth",ylab = "Contribution to Estimates",sub=paste("Line fitted with ",j," df",sep=""))
+			lines(sort(unique(standat$dep10m)), sigmeanfit, err = -1, type = "l")
+			points(as.numeric(names(depthprop[nnn >= 25])), depthprop[nnn >= 25], type = "p", pch = 16)
+			if(j == 2)title(main = plab[i])
+			standat[, (j + 2)] = sigmeanfit
+		}
+		standepth = standat
+		ttt = tapply(stock$est, c(stock$temp1d), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$temp1d), sum)
+		dekena = sort(as.numeric(names(ttt)))
+		ttt = ttt[1:length(dekena)]
+		nnn = nnn[1:length(dekena)]
+		blowup = max(nnn)
+		stanttt = (blowup/nnn) * ttt
+		tempprop = stanttt/sum(stanttt)
+		standat = data.frame(prop = tempprop, temp1d = sort(as.numeric(names(tempprop))), nnn = nnn)
+		assign("standat", standat, envir=.GlobalEnv)
+		for(j in 2:5) {
+			modexp = paste("glm(prop ~ poly(temp1d,", j, "), data = standat, na.action = na.omit, weights = nnn)",collapse = "", sep = "")
+			mainmod = eval(parse(text = modexp))
+			sigmeanpred = as.data.frame(predict(mainmod, type = "link", se.fit = T))
+			sigmeanfit = tapply(sigmeanpred$fit, list(standat$temp1d[is.na(standat$temp1d) == F]), mean)
+			plot(as.numeric(names(tempprop[nnn >= 1])), tempprop[nnn >= 1], ylim = c(0, ymax), xlab = "Temperature", ylab = "Contribution to Estimates",sub=paste("Line fitted with ",j," df",sep=""))
+			lines(sort(unique(standat$temp1d)), sigmeanfit, err = -1, type = "l")
+			points(as.numeric(names(tempprop[nnn >= 25])), tempprop[nnn >= 25], type = "p", pch = 16)
+			if(j == 2)title(main = plab[i])
+			standat[, (j + 2)] = sigmeanfit
+		}
+		stantemp = standat
+		ttt = tapply(stock$est, c(stock$timehr), sum)
+		nnn = tapply((stock$year/stock$year), c(stock$timehr), sum)
+		blowup = max(nnn)
+		stanttt = (blowup/nnn) * ttt
+		timeprop = stanttt/sum(stanttt)
+		standat = data.frame(prop = timeprop, timehr = sort(as.numeric(names(timeprop))), nnn = nnn)
+		assign("standat", standat, envir=.GlobalEnv)
+		for(j in 2:5) {
+			modexp = paste("glm(prop ~ poly(timehr,", j, "), data = standat, na.action = na.omit, weights = nnn)",collapse = "", sep = "")
+			mainmod = eval(parse(text = modexp))
+			sigmeanpred = as.data.frame(predict(mainmod, type = "link", se.fit = T))
+			sigmeanfit = tapply(sigmeanpred$fit, list(standat$timehr[is.na(standat$timehr) == F]), mean)
+			plot(as.numeric(names(timeprop[nnn >= 1])), timeprop[nnn >= 1], ylim = c(0, ymax), xlab = "Local Time", ylab = "Contribution to Estimates",sub=paste("Line fitted with ",j," df",sep=""))
+			lines(sort(unique(standat$timehr)), sigmeanfit, err = -1, type = "l")
+			points(as.numeric(names(timeprop[nnn >= 25])), timeprop[nnn >= 25], type = "p", pch = 16)
+			if(j == 2)title(main = plab[i])
+			standat[, (j + 2)] = sigmeanfit
+		}
+		stantime = standat
+			assign("standepth", standepth, envir=.GlobalEnv)
+			assign("stantime", stantime, envir=.GlobalEnv)
+			assign("stantemp", stantemp, envir=.GlobalEnv)
+		if(i == 1) {
+			standepth1 = standepth
+			stantime1 = stantime
+			stantemp1 = stantemp
+			assign("standepth1", standepth1, envir=.GlobalEnv)
+			assign("stantime1", stantime1, envir=.GlobalEnv)
+			assign("stantemp1", stantemp1, envir=.GlobalEnv)
+			#dput(standepth1, paste("D:\\assess\\SurveyDataAnalysisR\\standepth1", sep = ""))
+			#dput(stantime1, paste("D:\\assess\\SurveyDataAnalysisR\\stantime1", sep = ""))
+			#dput(stantemp1, paste("D:\\assess\\SurveyDataAnalysisR\\stantemp1", sep = ""))
+		}
+		if(i == 2) {
+			standepth2 = standepth
+			stantime2 = stantime
+			stantemp2 = stantemp
+			assign("standepth2", standepth2, envir=.GlobalEnv)
+			assign("stantime2", stantime2, envir=.GlobalEnv)
+			assign("stantemp2", stantemp2, envir=.GlobalEnv)
+			#dput(standepth2, paste("D:\\assess\\SurveyDataAnalysisR\\standepth2", sep = ""))
+			#dput(stantime2, paste("D:\\assess\\SurveyDataAnalysisR\\stantime2", sep = ""))
+			#dput(stantemp2, paste("D:\\assess\\SurveyDataAnalysisR\\stantemp2", sep = ""))
+		}
+		if(i == 3) {
+			standepth3 = standepth
+			stantime3 = stantime
+			stantemp3 = stantemp
+			assign("standepth3", standepth3, envir=.GlobalEnv)
+			assign("stantime3", stantime3, envir=.GlobalEnv)
+			assign("stantemp3", stantemp3, envir=.GlobalEnv)
+			#dput(standepth3, paste("D:\\assess\\SurveyDataAnalysisR\\standepth3", sep = ""))
+			#dput(stantime3, paste("D:\\assess\\SurveyDataAnalysisR\\stantime3", sep = ""))
+			#dput(stantemp3, paste("D:\\assess\\SurveyDataAnalysisR\\stantemp3", sep = ""))
+		}
+		if(i == 4) {
+			standepth4 = standepth
+			stantime4 = stantime
+			stantemp4 = stantemp
+			assign("standepth4", standepth4, envir=.GlobalEnv)
+			assign("stantime4", stantime4, envir=.GlobalEnv)
+			assign("stantemp4", stantemp4, envir=.GlobalEnv)
+			#dput(standepth4, paste("D:\\assess\\SurveyDataAnalysisR\\standepth4", sep = ""))
+			#dput(stantime4, paste("D:\\assess\\SurveyDataAnalysisR\\stantime4", sep = ""))
+			#dput(stantemp4, paste("D:\\assess\\SurveyDataAnalysisR\\stantemp4", sep = ""))
+		}
+
+	}
+	dev.off()
+	cat("\nSTRATIFICATION SCHEMES", "\n")
+	print(strata.stock)
+	assign("strata.stock", strata.stock, envir=.GlobalEnv)
+	MeanTemp = round(weighted.mean(stantemp$temp1d, stantemp$nnn))
+	#Default lower/upper temperatures to populate next dialog
+	LowerTemp = MeanTemp - 2
+	UpperTemp = MeanTemp + 2
+	outdf = stock
+	stock = stock[,  - (21:172)]
+#saving the uncalibrated version for comparison runs (uncal not required by the application)
+	uncal = uncal[,  - (21:172)]
+	options(stringsAsFactors = TRUE)
+	cat("\nFinished Diagnostics\n")
+	#Create include files for the Adjustments dialog
+	sdblank = standepth
+	sdblank[, 1] = rep(NA, dim(standepth)[1])
+	sdblank[, 4] = rep(NA, dim(standepth)[1])
+	sdblank[, 5] = rep(NA, dim(standepth)[1])
+	sdblank[, 6] = rep(NA, dim(standepth)[1])
+	sdblank[, 7] = rep(NA, dim(standepth)[1])
+	stblank = stantime
+	stblank[, 1] = rep(NA, dim(stantime)[1])
+	stblank[, 4] = rep(NA, dim(stantime)[1])
+	stblank[, 5] = rep(NA, dim(stantime)[1])
+	stblank[, 6] = rep(NA, dim(stantime)[1])
+	stblank[, 7] = rep(NA, dim(stantime)[1])
+	sd1 = sdblank
+	st1 = stblank
+	sd2 = sdblank
+	st2 = stblank
+	sd3 = sdblank
+	st3 = stblank
+	sd4 = sdblank
+	st4 = stblank
+	if(exists("standepth1")) {
+		sd1 = standepth1
+		st1 = stantime1
+	}
+	if(exists("standepth2")) {
+		sd2 = standepth2
+		st2 = stantime2
+	}
+	if(exists("standepth3")) {
+		sd3 = standepth3
+		st3 = stantime3
+	}
+	if(exists("standepth4")) {
+		sd4 = standepth4
+		st4 = stantime4
+	}
+	system(paste("open ",getwd(),"/ssdiagraphs.pdf",sep=""))
+	cat("\nThe graphics pdf file must be closed if you want to do another run of Diagnostics. Save to a different name if you wish to keep it.\n")
+	assign("outdf", outdf, envir=.GlobalEnv)
+	SSGUI2(doweights,donumbers,dogroup1,dogroup2,LowerTemp,UpperTemp)
+	#Assign dataframe to memory for retrieval
+	#Return output parameters and dataframes, if any
+	list(c("nada"), "outdf")
+}
+html.table <- function(df,main="",center="F",tableSummary="")
+{
+#not used
+  cat("<table border=\"1\" summary=\"tableSummary\">")
+  cat("<caption><em>")
+    cat(main)
+  cat("</em></caption>\n")
+  cat("<tr>")
+    cat("<th>");cat("</th>") # empty row number title
+    nvar = length(df)
+    for (i in 1:nvar) { 
+      cat("<th>",names(df[i]),"</th>")
+    }
+  cat("</tr>\n")
+  nrows = length(df[[1]])
+  if (length(nrows)>0) {
+   for (row in 1:nrows) {
+     cat("<tr><th>",row,"</th>")
+     for (col in 1:nvar) {
+      cat("<td>",df[[col]][row],"</td>")
+     }
+     cat("</tr>\n")
+   }
+  }
+  cat("</table>")
+}
+
+

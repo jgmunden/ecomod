@@ -1,0 +1,156 @@
+#SurveyDataAnalysis (Desktop R version)
+#Source file for installing the application in R.
+#Either select all/copy/paste into an R workspace, or edit the path in the 3 source commands below.
+#And either create a "D:/assess/SurveyDataAnalysisR" folder and put the various files in it 
+# or edit occurrences of the path name in SSDiagnosticsRdt.txt and SSAdjustmentsR.txt and put them there.
+#Copy or create a ***32-bit*** .Rdata workspace in the folder.
+###source("D:/assess/SurveyDataAnalysisR/SurveyScope.txt")
+#Then type the following to start the application
+###SSGUI()
+#User Interface package for R
+require(tcltk2)
+#link to SQL databases; !!!NOTE THIS ONLY WORKS FOR 32-BIT R!!! So if you have both 32-bit and 64-bit R installed with 64-bit the default, use the 32-bit icon
+# to start a session and load the desired workspace. Opening a workspace directly will invoke the default 64-bit R, even if the workspace was created in a 32-bit session.
+library(RODBC)
+source("D:/assess/SurveyDataAnalysisR/SSDiagnosticsRdt.txt")
+source("D:/assess/SurveyDataAnalysisR/SSAdjustmentsR.txt")
+#Create the components of the User Interface Diagnostics dialogbox.
+#Conducts the database extraction, processes the data according to the user definition, runs the diagnostics, and initiates the second dialog gui
+SSGUI=function() {
+DiagnosticsR=tktoplevel()
+tktitle(DiagnosticsR) <- "Survey Data Analysis with R"
+tkgrid(tklabel(DiagnosticsR,text="DATA SELECTION & DEFINITION"),stick="we")
+tkgrid(tklabel(DiagnosticsR,text=""))
+tkgrid(tklabel(DiagnosticsR,text="Survey"),tklabel(DiagnosticsR,text="Stock"),tklabel(DiagnosticsR,text="Subset Strata"),tklabel(DiagnosticsR,text="Sex"),sticky="n")
+Surveys <- c("SUMMER ", "GEORGES","4VWCOD ","SPRING ","FALL   ","GULF   ")
+Surveylist=tk2listbox(DiagnosticsR, values=Surveys, selection=1, selectmode = "single", height = 6, scroll = "none", autoscroll = "x", enabled = TRUE)
+Stocks <- c("CAPELIN","COD","COD4VN","COD4VSW","COD4X","CUSK","DOGFISH","HADDOCK","HADDOCK4VW","HADDOCK4X","HALIBUT","HERRING","LITTLESKATE","LONGHORNSCULPIN",
+"MONKFISH","PLAICE","PLAICE4VW","PLAICE4X","POLLOCK","POUT","REDFISH","REDFISHUNIT2","REDFISHUNIT3","ROSEFISH",
+"SANDLANCE","SHANNY","SILVERHAKE","SMOOTHSKATE","SHORTFINSQUID","THORNYSKATE","TURBOT",
+"WHITEHAKE","WHITEHAKE4VN","WHITEHAKE4VSW","WHITEHAKE4X","WINTERFLOUNDER","WINTERFLOUNDER4X","WINTERSKATE","WITCH","WITCH4VW","WITCH4X","WOLFFISH",
+"YELLOWTAIL","YELLOWTAIL4VW","YELLOWTAIL4X",
+"COD4T","HADDOCK4T","WHITEHAKE4T","SILVERHAKE4T","POLLOCK4T","REDFISH4T","HALIBUT4T","PLAICE4T","WITCH4T","YELLOWTAIL4T","WINTERFLOUNDER4T","WOLFFISH4T",
+"THORNYSKATE4T","SMOOTHSKATE4T","LITTLESKATE4T","WINTERSKATE4T","DOGFISH4T","MONKFISH4T","POUT4T")
+Stocklist=tk2listbox(DiagnosticsR, values=Stocks, selection=2, selectmode = "single", height = 20, scroll = "y", autoscroll = "none", enabled = TRUE)
+tksee(Stocklist,0)
+Strata <- as.character(c(seq(401,411),seq(415,429),seq(431,466),seq(470,478),seq(480,485),seq(490,495),seq(501,508)))
+Stratalist=tk2listbox(DiagnosticsR, values=Strata, selection=seq(1,91), selectmode = "extended", height = 20, scroll = "y", autoscroll = "none", enabled = TRUE)
+tksee(Stratalist,0)
+Sex <- c("Combined", "Males","Females")
+Sexlist=tk2listbox(DiagnosticsR, values=Sex, selection=1, selectmode = "single", height = 3, scroll = "none", autoscroll = "y", enabled = TRUE)
+tkgrid(Surveylist,Stocklist,Stratalist,Sexlist,sticky="n")
+DoWB <- tk2checkbutton(DiagnosticsR, text = "Do Weights and Biomass")
+tkgrid(DoWB,sticky="w")
+keepDoWB=tclVar("1")
+tkconfigure(DoWB,variable=keepDoWB)
+DoNA <- tk2checkbutton(DiagnosticsR, text = "Do Numbers and Abundance")
+tkgrid(DoNA,sticky="w")
+keepDoNA=tclVar("1")
+tkconfigure(DoNA,variable=keepDoNA)
+DoGroups <- tk2checkbutton(DiagnosticsR, text = "Do Length Groups (Numbers Only)")
+tkgrid(DoGroups,sticky="w")
+keepDoGroups=tclVar("0")
+tkconfigure(DoGroups,variable=keepDoGroups)
+G1small <- tclVar("1")
+G1smallEntry=tk2entry(DiagnosticsR, textvariable=G1small)
+tkgrid(tklabel(DiagnosticsR,text="Smallest (cm)"),G1smallEntry)
+G1large <- tclVar("30")
+G1largeEntry=tk2entry(DiagnosticsR, textvariable=G1large)
+tkgrid(tklabel(DiagnosticsR,text="Largest (cm)"),G1largeEntry)
+G2small <- tclVar("31")
+G2smallEntry=tk2entry(DiagnosticsR, textvariable=G2small)
+tkgrid(tklabel(DiagnosticsR,text="Smallest (cm)"),G2smallEntry)
+G2large <- tclVar("150")
+G2largeEntry=tk2entry(DiagnosticsR, textvariable=G2large)
+tkgrid(tklabel(DiagnosticsR,text="Largest (cm)"),G2largeEntry)
+DoCatchability <- tk2checkbutton(DiagnosticsR, text = "Use Documented Transformations for Vessel Catchability Coefficients")
+tkgrid(DoCatchability,sticky="w")
+keepDoCatchability=tclVar("0")
+tkconfigure(DoCatchability,variable=keepDoCatchability)
+uid <- tclVar("")
+uidEntry=tk2entry(DiagnosticsR, textvariable=uid)
+tkgrid(tklabel(DiagnosticsR,text="Username for Oracle Account on BANK"),uidEntry)
+pw <- tclVar("")
+pwEntry=tk2entry(DiagnosticsR, textvariable=pw)
+tkgrid(tklabel(DiagnosticsR,text="Password for Oracle Account on BANK"),pwEntry)
+AppApply <- tk2button(DiagnosticsR, text = "Apply", width = 7, command = function() SSDiagnostics(tclvalue(tclVar(Surveys[as.numeric(tkcurselection(Surveylist))+1])),
+	tclvalue(tclVar(Stocks[as.numeric(tkcurselection(Stocklist))+1])),tclvalue(tclVar(Strata[as.numeric(tkcurselection(Stratalist))+1])),
+	tclvalue(tclVar(Sex[as.numeric(tkcurselection(Sexlist))+1])),state(DoWB),state(DoNA),state(DoGroups),tclvalue(G1small),tclvalue(G1large),
+	tclvalue(G2small),tclvalue(G2large),state(DoCatchability),tclvalue(uid),tclvalue(pw)))
+AppCancel <- tk2button(DiagnosticsR, text = "Cancel", width = 7, command = function() tkdestroy(DiagnosticsR))
+tkgrid(AppApply,sticky="w")
+tkgrid(AppCancel,sticky="w")
+#determine the window size (cover different screen sizes)
+tkwm.geometry(DiagnosticsR,"")
+tkfocus(DiagnosticsR)
+}
+
+#Create the components of the User Interface Adjustments dialogbox.
+#Conducts the estimations, adjustments for depth and local time if desired, analysis of temperature effects if desired.
+SSGUI2=function(doweights,donumbers,dogroup1,dogroup2,LowerTemp,UpperTemp) {
+AdjustmentsR=tktoplevel()
+tktitle(AdjustmentsR) <- "Survey Data Analysis with R - Step 2"
+tkgrid(tklabel(AdjustmentsR,text="ESTIMATION"),stick="we")
+tkgrid(tklabel(AdjustmentsR,text=""))
+tkgrid(tklabel(AdjustmentsR,text="Estimate"),tklabel(AdjustmentsR,text="Adjust For"),tklabel(AdjustmentsR,text="Fitting Options for Depth"),tklabel(AdjustmentsR,text="Fitting Options for Time"),sticky="n")
+#tkgrid(tklabel(AdjustmentsR,text="Estimate"),tklabel(AdjustmentsR,text="Adjust For"),tklabel(AdjustmentsR,text="Fitting Options for Depth"),tklabel(AdjustmentsR,text="Fitting Options for Time"),tklabel(AdjustmentsR,text="Depth Fitting Template"),tklabel(AdjustmentsR,text="Time Fitting Template"),sticky="n")
+Estimates <- c("Weights", "Numbers","Group.1","Group.2")
+Estimates=Estimates[c(doweights,donumbers,dogroup1,dogroup2)]
+Estimatelist=tk2listbox(AdjustmentsR, values=Estimates, selection=1, selectmode = "single", height = 6, scroll = "none", autoscroll = "x", enabled = TRUE)
+Adjustments <- c("Nothing", "Depth","Time","Depth & Time")
+Adjustmentlist=tk2listbox(AdjustmentsR, values=Adjustments, selection=1, selectmode = "single", height = 6, scroll = "none", autoscroll = "x", enabled = TRUE)
+DepthFits <- c("Raw", "2df","3df","4df","5df")
+DepthFitlist=tk2listbox(AdjustmentsR, values=DepthFits, selection=1, selectmode = "single", height = 6, scroll = "none", autoscroll = "x", enabled = TRUE)
+TimeFits <- c("Raw", "2df","3df","4df","5df")
+TimeFitlist=tk2listbox(AdjustmentsR, values=TimeFits, selection=1, selectmode = "single", height = 6, scroll = "none", autoscroll = "x", enabled = TRUE)
+#Would need to complete and activate commented code to display editable fitted values (and uncomment tkbind lines)
+#Depths <- as.character(standepthfile$dep10m)
+#DepthProps=as.character(round(standepthfile[,x],5))
+#LocalTimes <- as.character(stantimefile$timehr)
+#LocalTimeProps=as.character(round(stantimefile[,x],5))
+#Depthlist=tk2tablelist(AdjustmentsR, columntitles = c("Depth (10m)", "Proportion"), height=40,width=30,stretch = "all", expand = 1)
+#Timelist=tk2tablelist(AdjustmentsR, columntitles = c("Local Time (hr))", "Proportion"), height=40,width=30, stretch = "all", expand = 1)
+#for(d in 1:length(Depths)) tkinsert(Depthlist, "end", c(Depths[d], DepthProps[d]))
+#for(t in 1:length(LocalTimes)) tkinsert(Timelist, "end", c(LocalTimes[t], LocalTimeProps[t]))
+#tkgrid(Estimatelist,Adjustmentlist,DepthFitlist,TimeFitlist,Depthlist,Timelist,sticky="n")
+tkgrid(Estimatelist,Adjustmentlist,DepthFitlist,TimeFitlist,sticky="n")
+DoIndex <- tk2checkbutton(AdjustmentsR, text = "Produce Temperature Index")
+#tkgrid(DoIndex,sticky="w")
+keepDoIndex=tclVar("0")
+tkconfigure(DoIndex,variable=keepDoIndex)
+LTT <- tclVar(as.character(LowerTemp))
+LTTEntry=tk2entry(AdjustmentsR, textvariable=LTT)
+UTT <- tclVar(as.character(UpperTemp))
+UTTEntry=tk2entry(AdjustmentsR, textvariable=UTT)
+tkgrid(DoIndex,tklabel(AdjustmentsR,text="Lower Temperature Threshold (deg C)"),LTTEntry,tklabel(AdjustmentsR,text="Upper Temperature Threshold (deg C)"),UTTEntry,sticky="w")
+AppApply <- tk2button(AdjustmentsR, text = "Apply", width = 7, command = function() SSAdjustments(state(DoIndex),tclvalue(LTT),tclvalue(UTT),
+	tclvalue(tclVar(Estimates[as.numeric(tkcurselection(Estimatelist))+1])),tclvalue(tclVar(Adjustments[as.numeric(tkcurselection(Adjustmentlist))+1])),
+	tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1])),tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))))
+AppCancel <- tk2button(AdjustmentsR, text = "Cancel", width = 7, command = function() tkdestroy(AdjustmentsR))
+tkgrid(AppApply,sticky="w")
+tkgrid(AppCancel,sticky="w")
+#determine the window size (cover different screen sizes)
+tkwm.geometry(AdjustmentsR,"")
+tkfocus(AdjustmentsR)
+#tkbind(TimeFitlist,"<<ListboxSelect>>", SSCallback)
+#tkbind(DepthFitlist,"<<ListboxSelect>>", SSCallback)
+}
+
+SSCallback = function() {
+if (tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1]))=="Raw") standepthfile=get("standepth")
+if (tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1]))=="2df") standepthfile=get("standepth1")
+if (tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1]))=="3df") standepthfile=get("standepth2")
+if (tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1]))=="4df") standepthfile=get("standepth3")
+if (tclvalue(tclVar(DepthFits[as.numeric(tkcurselection(DepthFitlist))+1]))=="5df") standepthfile=get("standepth4")
+if (tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))=="Raw") stantimefile=get("stantime")
+if (tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))=="2df") stantimefile=get("stantime1")
+if (tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))=="3df") stantimefile=get("stantime2")
+if (tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))=="4df") stantimefile=get("stantime3")
+if (tclvalue(tclVar(TimeFits[as.numeric(tkcurselection(TimeFitlist))+1]))=="5df") stantimefile=get("stantime4")
+}
+
+
+
+
+
+
