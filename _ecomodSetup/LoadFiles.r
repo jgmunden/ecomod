@@ -3,5 +3,6 @@ LoadFiles = function( ... ) {
   if ( length(filelist) > 0  ) for ( nm in c(...) ) source( file=nm )
   return( filelist )
 }
+test
 
 
